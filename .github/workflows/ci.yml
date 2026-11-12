@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      # Pinned to the version this repo's .golangci.yaml was validated
+      # against; bump deliberately, not via @latest drift.
+      # Installed from the Go module proxy rather than GitHub Release
+      # assets, which have returned sustained 504s. Module integrity is
+      # verified against sum.golang.org. golangci-lint itself requires
+      # Go >= 1.25, so build it with that toolchain; the modules are still
+      # built and tested with the go-version above.
+      - name: Install golangci-lint
+        env:
+          GOTOOLCHAIN: go1.25.0
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+
+      # This monorepo holds one Go module per library (etims/ today,
+      # future libraries alongside it). Discover every module rather than
+      # hardcoding a path, so adding a new module doesn't require a CI edit.
+      # Every module lints against the shared root .golangci.yaml.
+      - name: Build, lint, and test each module
+        run: |
+          set -eu
+          config="$GITHUB_WORKSPACE/.golangci.yaml"
+          for gomod in $(find . -name go.mod -not -path './.git/*'); do
+            dir=$(dirname "$gomod")
+            echo "::group::$dir"
+            (
+              cd "$dir"
+              echo "-- gofmt --"
+              unformatted=$(gofmt -l .)
+              if [ -n "$unformatted" ]; then
+                echo "The following files are not gofmt-formatted:"
+                echo "$unformatted"
+                exit 1
+              fi
+
+              echo "-- go vet --"
+              go vet ./...
+
+              echo "-- golangci-lint (includes staticcheck) --"
+              golangci-lint run --config "$config" ./...
+
+              echo "-- go build --"
+              go build ./...
+
+              echo "-- go test -race --"
+              go test -race ./...
+            )
+            echo "::endgroup::"
+          done
+
+  # Cuts a "<module>/vX.Y.Z" tag and GitHub Release for every module with
+  # release-worthy commits (feat/fix/perf/breaking, see
+  # .github/scripts/release.sh) since its last tag. Gated behind `test`
+  # so nothing is ever tagged unless it built, linted, and passed on main.
+  release:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Cut releases for changed modules
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/release.sh

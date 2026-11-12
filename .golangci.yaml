@@ -1,0 +1,63 @@
+version: "2"
+run:
+  concurrency: 4
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - exhaustive
+    - goconst
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - prealloc
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+    misspell:
+      locale: US
+    staticcheck:
+      checks:
+        - all
+  exclusions:
+    generated: lax
+    paths:
+      - ".*_generated.go"
+      - ".*_mock.go"
+    rules:
+      - path: "_test\\.go$"
+        linters:
+          - funlen
+          - errcheck
+          - gosec
+          - goconst
+      - linters:
+          - errcheck
+        text: "Close\\(\\) is not checked"
+      - linters:
+          - errcheck
+        text: "os.Setenv"
+      - linters:
+          - staticcheck
+        text: "ST1019" # Duplicate imports often used for aliasing in this project
